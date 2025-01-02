@@ -73,3 +73,5 @@ EXPOSE 21 33 50000-50030 80 443
 
 # Comando por defecto al iniciar el contenedor
 CMD ["/bin/bash", "-c", "proftpd ; service ssh start ; apachectl -D FOREGROUND"]
+
+#
