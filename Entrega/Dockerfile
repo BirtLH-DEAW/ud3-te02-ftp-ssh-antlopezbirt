@@ -1,75 +1,88 @@
-# Utilizamos una imagen oficial de Ubuntu
+# ETAPA 1/2: Clona el repositorio en una imagen alpine/git
+FROM alpine/git AS inicial
+
+# Adquiere la clave privada
+COPY --chmod=400 ssh/clave_deaw /root/.ssh/id_rsa
+
+# Añade Github.com a los hosts conocidos de SSH y clona
+RUN \
+    ssh-keyscan -H github.com >> /etc/ssh/ssh_known_hosts \
+    && git clone git@github.com:deaw-birt/UD3-Dockerfile.git /srv/ftp/
+
+# ETAPA 2/2: Genera la imagen final donde se copiará el repositorio clonado (desaparecerá el rastro de la clave privada)
 FROM ubuntu:18.04
 
-# Damos información sobre la imagen que estamos creando
+# Establece los metadatos de la imagen
 LABEL \
     version="1.0" \
     description="Ubuntu + Apache2 + virtual host" \
-    maintainer="Antón López Álvarez <antlopez@birt.eus>"
+    maintainer="Anton Lopez Alvarez <antlopez@birt.eus>"
 
-# Actualizamos la lista de paquetes e instalamos todos los paquetes necesarios
-RUN apt-get update && \
+# Actualiza e instala todos los paquetes necesarios, en esta ultima fase no se instala git, ya no se necesita
+RUN \
+    apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y nano apache2 \
-    proftpd openssl ssh git && \
+    proftpd openssl ssh && \
     rm -rf /var/lib/apt/lists/*
 
-# Creamos directorios para los sitios web y configuraciones
-RUN mkdir -p /var/www/html/sitioprimero \
-    /var/www/html/sitiosegundo \
-    /root/.ssh /srv/ftp/proyecto
+# Copia todos los recursos al contenedor
+COPY \
+    apache/indexPrimero.html apache/sitioPrimero.conf apache/sitioPrimero.key \
+    apache/SitioPrimero.cer apache/indexSegundo.html apache/sitioSegundo.conf \
+    ftp/proftpd.conf ftp/proftpd.crt.pem ftp/proftpd.key.pem ftp/tls.conf \
+    ssh/sshd_config ssh/antlopez2.pub /
 
-# Copiamos archivos al contenedor
-COPY apache/indexPrimero.html /var/www/html/sitioprimero/index.html
-COPY apache/sitioPrimero.conf /etc/apache2/sites-available/sitioPrimero.conf
-COPY apache/sitioPrimero.key /etc/ssl/private/sitioPrimero.key
-COPY apache/SitioPrimero.cer /etc/ssl/certs/SitioPrimero.cer
-
-COPY apache/indexSegundo.html /var/www/html/sitiosegundo/index.html
-COPY apache/sitioSegundo.conf /etc/apache2/sites-available/sitioSegundo.conf
-
-COPY ftp/proftpd.conf /etc/proftpd/
-COPY ftp/proftpd.crt.pem /etc/ssl/certs/
-COPY ftp/proftpd.key.pem /etc/ssl/private/
-COPY ftp/tls.conf /etc/proftpd/
-
-COPY ssh/sshd_config /etc/ssh/sshd_config
-COPY ssh/antlopez2.pub /usr/local/authorized_keys
-
-COPY ssh/claverepoanton /root/.ssh/id_rsa
-
-# Se crean los usuarios con sus rutas home y se veta al segundo usuario del FTP
-RUN useradd antlopez1 --password $(openssl passwd -1 deaw) \
-    --home /var/www/html/sitioprimero/ && \
+RUN \
+    # Crea los directorios para alojar recursos y configuraciones
+    mkdir -p    /var/www/html/sitioprimero \
+                /var/www/html/sitiosegundo \
+                /root/.ssh /srv/ftp/proyecto && \
+    #Crea el grupo apacheFTP e incluye en él a Apache y a proFTPd
+    groupadd apacheFTP && \
+    usermod -G apacheFTP www-data && \
+    usermod -G apacheFTP ftp && \
+    # Se crean los usuarios con sus rutas home y se veta al segundo usuario del FTP
+    useradd antlopez1 --password $(openssl passwd -1 deaw) \
+        --home /var/www/html/sitioprimero/ && \
     useradd antlopez2 --password $(openssl passwd -1 deaw) \
-    --home /var/www/html/sitiosegundo/ && \
-    echo "antlopez2" >> /etc/ftpusers
+        --home /var/www/html/sitiosegundo/ && \
+    echo "antlopez2" >> /etc/ftpusers 
 
-# Se otorgan permisos para poder navegar por los ficheros HTML
-RUN chmod -R 755 /var/www/html/sitioprimero /var/www/html/sitiosegundo /srv/ftp /usr/local/authorized_keys
-#RUN chmod 644 /var/www/html/sitioprimero/* /var/www/html/sitiosegundo/*
-RUN chown -R antlopez1:antlopez1 /var/www/html/sitioprimero && \
-    chown -R antlopez2:antlopez2 /var/www/html/sitiosegundo
+RUN \
+    #Mueve los ficheros copiados a su ubicación correspondiente
+    mv indexPrimero.html /var/www/html/sitioprimero/index.html && \
+    mv sitioPrimero.conf /etc/apache2/sites-available/sitioPrimero.conf && \
+    mv sitioPrimero.key /etc/ssl/private/sitioPrimero.key && \
+    mv SitioPrimero.cer /etc/ssl/certs/SitioPrimero.cer && \
+    mv indexSegundo.html /var/www/html/sitiosegundo/index.html && \
+    mv sitioSegundo.conf /etc/apache2/sites-available/sitioSegundo.conf && \
+    mv proftpd.conf /etc/proftpd/ && \
+    mv proftpd.crt.pem /etc/ssl/certs/ && \
+    mv proftpd.key.pem /etc/ssl/private/ && \
+    mv tls.conf /etc/proftpd/ && \
+    mv sshd_config /etc/ssh/sshd_config && \
+    mv antlopez2.pub /usr/local/authorized_keys
 
-# Habilitamos los sitios y el módulo SSL
-RUN a2ensite sitioPrimero.conf && \
+RUN \
+    # Cambia los permisos de la clave pública
+    chmod 755 /usr/local/authorized_keys && \
+    # Cambia la propiedad de grupo de los directorios a utilizar por los usuarios
+    chown -R :apacheFTP /var/www/html && \
+    # Establece el permiso setGID para que el grupo apacheFTP pueda acceder a los ficheros subidos por FTP o SSH
+    chmod -R 2755 /var/www/html && \
+    # Establece el usuario propietario de cada directorio a utilizar
+    chown -R antlopez1 /var/www/html/sitioprimero && \
+    chown -R antlopez2 /var/www/html/sitiosegundo && \
+    # Habilita los sitios y el módulo SSL
+    a2ensite sitioPrimero.conf && \
     a2ensite sitioSegundo.conf && \
     a2enmod ssl
 
-#RUN chmod 400 /root/.ssh/claverepoanton
-RUN chmod 400 /root/.ssh/id_rsa
+# Copia el repositorio clonado en la fase inicial
+COPY --from=inicial /srv/ftp /srv/ftp/proyecto/
 
-# Añade la clave SSH al agente y clona el repositorio
-RUN eval "$(ssh-agent -s)" && \
-    ssh-add /root/.ssh/id_rsa && \
-#    ssh-add /root/.ssh/id_rsa && \
-    ssh-keyscan -H github.com >> /etc/ssh/ssh_known_hosts && \
-#    git clone git@github.com:deaw-birt/UD3-Dockerfile.git /srv/ftp/
-    git clone git@github.com:antlopezbirt/prueba.git /srv/ftp/proyecto/
-
-RUN chown -R ftp:nogroup /srv/ftp
-
-# Exponemos los puertos
+# Expone los puertos a publicar. El 33 para SSH y el rango 50000-50030 para FTP pasivo
 EXPOSE 21 33 50000-50030 80 443
 
-# Comando por defecto al iniciar el contenedor
+# Al arrancar el contenedor se inician proftpd, ssh y Apache
 CMD ["/bin/bash", "-c", "proftpd ; service ssh start ; apachectl -D FOREGROUND"]
