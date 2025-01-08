@@ -43,7 +43,7 @@ RUN \
     usermod -G apacheFTP ftp && \
     # Se crean los usuarios con sus rutas home y se veta al segundo usuario del FTP
     useradd antlopez1 --password $(openssl passwd -1 deaw) \
-        --home /var/www/html/sitioprimero/ && \
+        --home /var/www/html/sitioprimero/ --shell /usr/sbin/nologin && \
     useradd antlopez2 --password $(openssl passwd -1 deaw) \
         --home /var/www/html/sitiosegundo/ && \
     echo "antlopez2" >> /etc/ftpusers 
